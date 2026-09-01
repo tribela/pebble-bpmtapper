@@ -1,0 +1,32 @@
+{
+  "name": "bpm-tapper",
+  "author": "Tribela",
+  "version": "1.0.0",
+  "keywords": ["pebble-app", "bpm", "metronome", "tap-tempo", "music"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "BPM Tapper",
+    "shortName": "BPM Tapper",
+    "uuid": "4ec0d9d8-61f2-4943-8241-bfbb449a0942",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery",
+      "basalt",
+      "diorite",
+      "chalk",
+      "flint",
+      "gabbro"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "dummy"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}
