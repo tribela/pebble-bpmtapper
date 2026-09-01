@@ -9,7 +9,9 @@
 #define TAP_HISTORY 32
 
 static Window *s_window;
-static TextLayer *s_bpm_layer;
+static TextLayer *s_bpm_layer; // placeholder "Tap to detect"
+static TextLayer *s_bpm_num_layer; // fixed-width numbers
+static TextLayer *s_bpm_unit_layer; // "BPM" label
 static TextLayer *s_time_layer;
 static AppTimer *s_time_timer = NULL;
 static AppTimer *s_detector_timer = NULL;
@@ -50,14 +52,25 @@ static void time_tick(void *ctx) {
   s_time_timer = app_timer_register(60000, time_tick, NULL);
 }
 
+static char s_bpm_num_buf[8];
+
 static void update_display(void) {
-  if (!s_bpm_layer) return;
+  if (!s_bpm_layer || !s_bpm_num_layer || !s_bpm_unit_layer) return;
   if (s_bpm >= BPM_MIN && s_bpm <= BPM_MAX) {
-    snprintf(s_bpm_buf, sizeof(s_bpm_buf), "%d bpm", (int)s_bpm);
+    // stacked centered: numbers top, BPM label below
+    snprintf(s_bpm_num_buf, sizeof(s_bpm_num_buf), "%d", (int)s_bpm);
+    text_layer_set_text(s_bpm_num_layer, s_bpm_num_buf);
+    text_layer_set_text(s_bpm_unit_layer, "BPM");
+    layer_set_hidden(text_layer_get_layer(s_bpm_layer), true);
+    layer_set_hidden(text_layer_get_layer(s_bpm_num_layer), false);
+    layer_set_hidden(text_layer_get_layer(s_bpm_unit_layer), false);
   } else {
     snprintf(s_bpm_buf, sizeof(s_bpm_buf), "Tap to detect");
+    text_layer_set_text(s_bpm_layer, s_bpm_buf);
+    layer_set_hidden(text_layer_get_layer(s_bpm_layer), false);
+    layer_set_hidden(text_layer_get_layer(s_bpm_num_layer), true);
+    layer_set_hidden(text_layer_get_layer(s_bpm_unit_layer), true);
   }
-  text_layer_set_text(s_bpm_layer, s_bpm_buf);
 }
 
 static void flash_cb(bool on) {
@@ -273,19 +286,40 @@ static void window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect b = layer_get_bounds(root);
 
-  s_time_layer = text_layer_create(GRect(0, 0, b.size.w, 28));
+  s_time_layer = text_layer_create(GRect(0, 0, b.size.w, 30));
   text_layer_set_background_color(s_time_layer, GColorWhite);
   text_layer_set_text_color(s_time_layer, GColorBlack);
   text_layer_set_text_alignment(s_time_layer, GTextAlignmentCenter);
-  text_layer_set_font(s_time_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_font(s_time_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   layer_add_child(root, text_layer_get_layer(s_time_layer));
 
-  s_bpm_layer = text_layer_create(GRect(0, (b.size.h - 40)/2, b.size.w, 40));
+  // placeholder centered (shown when no BPM)
+  s_bpm_layer = text_layer_create(GRect(0, (b.size.h - 50)/2, b.size.w, 50));
   text_layer_set_background_color(s_bpm_layer, GColorClear);
   text_layer_set_text_color(s_bpm_layer, GColorWhite);
   text_layer_set_text_alignment(s_bpm_layer, GTextAlignmentCenter);
   text_layer_set_font(s_bpm_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   layer_add_child(root, text_layer_get_layer(s_bpm_layer));
+
+  // stacked: numbers large top, BPM small below
+  int block_h = 50 + 2 + 18;
+  int block_y = (b.size.h - block_h)/2;
+  if (block_y < 30) block_y = 30; // keep below time bar
+  s_bpm_num_layer = text_layer_create(GRect(0, block_y, b.size.w, 50));
+  text_layer_set_background_color(s_bpm_num_layer, GColorClear);
+  text_layer_set_text_color(s_bpm_num_layer, GColorWhite);
+  text_layer_set_text_alignment(s_bpm_num_layer, GTextAlignmentCenter);
+  text_layer_set_font(s_bpm_num_layer, fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS));
+  layer_add_child(root, text_layer_get_layer(s_bpm_num_layer));
+
+  s_bpm_unit_layer = text_layer_create(GRect(0, block_y + 50 + 2, b.size.w, 18));
+  text_layer_set_background_color(s_bpm_unit_layer, GColorClear);
+  text_layer_set_text_color(s_bpm_unit_layer, GColorWhite);
+  text_layer_set_text_alignment(s_bpm_unit_layer, GTextAlignmentCenter);
+  text_layer_set_font(s_bpm_unit_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+  layer_add_child(root, text_layer_get_layer(s_bpm_unit_layer));
+  layer_set_hidden(text_layer_get_layer(s_bpm_num_layer), true);
+  layer_set_hidden(text_layer_get_layer(s_bpm_unit_layer), true);
 
   update_time();
   update_display();
@@ -293,6 +327,8 @@ static void window_load(Window *window) {
 
 static void window_unload(Window *window) {
   (void)window;
+  text_layer_destroy(s_bpm_unit_layer); s_bpm_unit_layer = NULL;
+  text_layer_destroy(s_bpm_num_layer); s_bpm_num_layer = NULL;
   text_layer_destroy(s_bpm_layer); s_bpm_layer = NULL;
   text_layer_destroy(s_time_layer); s_time_layer = NULL;
 }
