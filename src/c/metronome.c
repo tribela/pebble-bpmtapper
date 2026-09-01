@@ -32,7 +32,7 @@ static void beat_cb(void *ctx) {
   }
 
   if (has_vibe(s_mode)) vibes_enqueue_custom_pattern(s_vibe);
-  if (has_sound(s_mode)) speaker_play_tone(1200, 30, 100, SpeakerWaveformSquare);
+  if (has_sound(s_mode)) speaker_play_tone(1200, 25, 35, SpeakerWaveformSquare);
 
   if (s_bpm <= 0) return;
   uint32_t interval = 60000 / (uint32_t)s_bpm;
