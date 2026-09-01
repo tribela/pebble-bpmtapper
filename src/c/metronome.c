@@ -21,6 +21,20 @@ static inline bool has_sound(MetMode m) {
   return m == MET_SOUND || m == MET_SCREEN_SOUND;
 }
 
+static uint32_t get_now_ms_local(void) {
+  time_t t; uint16_t ms; time_ms(&t, &ms);
+  return (uint32_t)t * 1000 + ms;
+}
+static uint32_t phase_delay(uint32_t anchor_ms, uint32_t interval) {
+  if (anchor_ms == 0) return interval;
+  uint32_t now = get_now_ms_local();
+  uint32_t elapsed = now - anchor_ms;
+  uint32_t rem = elapsed % interval;
+  uint32_t delay = (rem == 0) ? interval : interval - rem;
+  if (delay < 15) delay += interval; // avoid near-zero glitch
+  return delay;
+}
+
 static void beat_cb(void *ctx) {
   (void)ctx;
   if (!s_running) return;
@@ -48,6 +62,10 @@ void metronome_init(void (*flash_cb)(bool on)) {
 }
 
 void metronome_start(int32_t bpm) {
+  metronome_start_aligned(bpm, 0);
+}
+
+void metronome_start_aligned(int32_t bpm, uint32_t anchor_ms) {
   if (bpm < 30) bpm = 30;
   if (bpm > 300) bpm = 300;
   metronome_stop();
@@ -57,8 +75,19 @@ void metronome_start(int32_t bpm) {
   if (has_screen(s_mode) && s_flash_cb) s_flash_cb(false);
   light_enable(true);
   uint32_t interval = 60000 / (uint32_t)s_bpm;
-  s_beat_timer = app_timer_register(interval, beat_cb, NULL);
-  APP_LOG(APP_LOG_LEVEL_INFO, "metronome start %d mode %d interval %u", (int)s_bpm, (int)s_mode, (unsigned)interval);
+  uint32_t delay;
+  if (anchor_ms == 0) {
+    delay = interval;
+  } else {
+    uint32_t now = get_now_ms_local();
+    uint32_t elapsed = now - anchor_ms;
+    uint32_t rem = elapsed % interval;
+    delay = (interval - rem) % interval; // 0 when exactly on grid -> immediate
+    if (delay == 0) delay = 5; // fire almost immediately to hit grid
+    else if (delay < 15) delay += interval;
+  }
+  s_beat_timer = app_timer_register(delay, beat_cb, NULL);
+  APP_LOG(APP_LOG_LEVEL_INFO, "metronome start %d mode %d interval %u delay %u anchor %u", (int)s_bpm, (int)s_mode, (unsigned)interval, (unsigned)delay, (unsigned)anchor_ms);
 }
 
 void metronome_stop(void) {
@@ -73,15 +102,22 @@ void metronome_stop(void) {
 }
 
 void metronome_set_bpm(int32_t bpm) {
+  metronome_set_bpm_aligned(bpm, 0);
+}
+
+void metronome_set_bpm_aligned(int32_t bpm, uint32_t anchor_ms) {
   if (bpm < 30) bpm = 30;
   if (bpm > 300) bpm = 300;
   s_bpm = bpm;
   if (s_running) {
     if (s_beat_timer) { app_timer_cancel(s_beat_timer); s_beat_timer = NULL; }
     uint32_t interval = 60000 / (uint32_t)s_bpm;
-    s_beat_timer = app_timer_register(interval, beat_cb, NULL);
+    uint32_t delay = phase_delay(anchor_ms, interval);
+    s_beat_timer = app_timer_register(delay, beat_cb, NULL);
+    APP_LOG(APP_LOG_LEVEL_INFO, "metronome set bpm %d delay %u anchor %u", (int)s_bpm, (unsigned)delay, (unsigned)anchor_ms);
+  } else {
+    APP_LOG(APP_LOG_LEVEL_INFO, "metronome set bpm %d (stopped)", (int)s_bpm);
   }
-  APP_LOG(APP_LOG_LEVEL_INFO, "metronome set bpm %d", (int)s_bpm);
 }
 
 bool metronome_is_running(void) { return s_running; }

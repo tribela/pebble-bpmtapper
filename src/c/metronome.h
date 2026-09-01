@@ -13,8 +13,10 @@ typedef enum {
 
 void metronome_init(void (*flash_cb)(bool on));
 void metronome_start(int32_t bpm);
+void metronome_start_aligned(int32_t bpm, uint32_t anchor_ms);
 void metronome_stop(void);
 void metronome_set_bpm(int32_t bpm);
+void metronome_set_bpm_aligned(int32_t bpm, uint32_t anchor_ms);
 bool metronome_is_running(void);
 int32_t metronome_get_bpm(void);
 void metronome_set_mode(MetMode mode);

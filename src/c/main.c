@@ -21,6 +21,7 @@ static uint32_t s_tap_times[TAP_HISTORY];
 static uint8_t s_tap_count_times = 0;
 static uint8_t s_tap_head = 0;
 static uint32_t s_last_tap_ms = 0;
+static uint32_t s_phase_anchor_ms = 0;
 static uint8_t s_tap_count = 0;
 
 static char s_time_buf[16]; // static: text_layer keeps pointer, not copy
@@ -84,13 +85,15 @@ static void detector_timeout_cb(void *ctx) {
   if (metronome_is_running()) return;
   if (s_bpm < BPM_MIN || s_bpm > BPM_MAX) return;
   if (s_tap_count < 2 || s_tap_count_times < 2) return;
-  metronome_start(s_bpm);
+  uint32_t anchor = s_phase_anchor_ms; // must capture before clear
+  metronome_start_aligned(s_bpm, anchor);
   s_tap_count = 0;
   s_tap_count_times = 0;
   s_tap_head = 0;
   s_last_tap_ms = 0;
+  // keep s_phase_anchor_ms for running phase; will be updated on next bpm change
   update_display();
-  APP_LOG(APP_LOG_LEVEL_INFO, "auto metronome %d", (int)s_bpm);
+  APP_LOG(APP_LOG_LEVEL_INFO, "auto metronome %d anchor %u", (int)s_bpm, (unsigned)anchor);
 }
 
 // auto-start metronome after idle: 2s after first tap, else 2 beats
@@ -145,6 +148,7 @@ static void handle_tap(void) {
     s_tap_count_times = 0;
     s_tap_head = 0;
     s_last_tap_ms = 0;
+    s_phase_anchor_ms = 0;
     if (s_detector_timer) { app_timer_cancel(s_detector_timer); s_detector_timer = NULL; }
   }
 
@@ -156,6 +160,7 @@ static void handle_tap(void) {
   if (s_tap_count_times < TAP_HISTORY) s_tap_count_times++;
 
   s_last_tap_ms = now;
+  s_phase_anchor_ms = now;
   if (s_tap_count == 0) s_tap_count = 1;
   else s_tap_count++;
 
@@ -174,13 +179,15 @@ static void change_bpm(int delta) {
   s_bpm += delta;
   if (s_bpm < BPM_MIN) s_bpm = BPM_MIN;
   if (s_bpm > BPM_MAX) s_bpm = BPM_MAX;
+  uint32_t now = get_now_ms();
+  s_phase_anchor_ms = now;
   if (metronome_is_running()) {
-    metronome_set_bpm(s_bpm);
+    metronome_set_bpm_aligned(s_bpm, now);
   } else {
     if (s_tap_count > 0) schedule_detector_timeout();
   }
   update_display();
-  APP_LOG(APP_LOG_LEVEL_INFO, "bpm manual %d", (int)s_bpm);
+  APP_LOG(APP_LOG_LEVEL_INFO, "bpm manual %d anchor %u", (int)s_bpm, (unsigned)now);
 }
 
 
@@ -246,6 +253,7 @@ static void back_click(ClickRecognizerRef r, void *ctx) {
     s_tap_count_times = 0;
     s_tap_head = 0;
     s_last_tap_ms = 0;
+    s_phase_anchor_ms = 0;
     if (s_detector_timer) { app_timer_cancel(s_detector_timer); s_detector_timer = NULL; }
     update_display();
   } else {
@@ -339,6 +347,7 @@ static void init(void) {
   s_tap_head = 0;
   s_tap_count = 0;
   s_last_tap_ms = 0;
+  s_phase_anchor_ms = 0;
   settings_load();
   metronome_init(flash_cb);
   metronome_set_mode(settings_get_met_mode());
