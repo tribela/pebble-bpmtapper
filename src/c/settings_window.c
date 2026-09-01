@@ -6,13 +6,36 @@ static Window *s_window;
 static MenuLayer *s_menu_layer;
 
 static InputMode s_input = INPUT_BUTTON;
-static MetMode s_met = MET_BOTH;
+static MetMode s_met = MET_SCREEN_VIBE;
+
+// hardware capability: Time 2 (emery) has touch + speaker, others don't
+static bool has_touch(void) {
+  return PBL_PLATFORM_TYPE_CURRENT == PlatformTypeEmery;
+}
+static bool has_speaker(void) {
+  return PBL_PLATFORM_TYPE_CURRENT == PlatformTypeEmery;
+}
+static bool input_available(InputMode m) {
+  if (m == INPUT_TOUCH) return has_touch();
+  return true;
+}
+static bool met_available(MetMode m) {
+  if (m == MET_SOUND || m == MET_SCREEN_SOUND) return has_speaker();
+  return true;
+}
 
 static const char* input_label(InputMode m) {
   switch(m){case INPUT_BUTTON:return "Button";case INPUT_TOUCH:return "Touch";case INPUT_ACCEL:return "Motion(Z)";default:return "?";}
 }
 static const char* met_label(MetMode m) {
-  switch(m){case MET_BOTH:return "Both";case MET_VIBE:return "Vibe";case MET_SCREEN:return "Screen";default:return "?";}
+  switch(m){
+    case MET_SCREEN_VIBE: return "Screen+Vibe";
+    case MET_VIBE: return "Vibe";
+    case MET_SCREEN: return "Screen";
+    case MET_SOUND: return "Sound";
+    case MET_SCREEN_SOUND: return "Screen+Sound";
+    default: return "?";
+  }
 }
 
 InputMode settings_get_input_mode(void){ return s_input; }
@@ -20,11 +43,11 @@ MetMode settings_get_met_mode(void){ return s_met; }
 
 void settings_load(void){
   if(persist_exists(PERSIST_KEY_INPUT_MODE)) s_input = (InputMode)persist_read_int(PERSIST_KEY_INPUT_MODE);
-  else s_input = INPUT_BUTTON;
+  else s_input = has_touch() ? INPUT_TOUCH : INPUT_BUTTON;
   if(persist_exists(PERSIST_KEY_MET_MODE)) s_met = (MetMode)persist_read_int(PERSIST_KEY_MET_MODE);
-  else s_met = MET_BOTH;
-  if(s_input>INPUT_ACCEL) s_input=INPUT_BUTTON;
-  if(s_met>MET_SCREEN) s_met=MET_BOTH;
+  else s_met = MET_SCREEN_VIBE;
+  if(s_input>INPUT_ACCEL || !input_available(s_input)) s_input = has_touch() ? INPUT_TOUCH : INPUT_BUTTON;
+  if(s_met>=MET_COUNT || !met_available(s_met)) s_met = MET_SCREEN_VIBE;
   metronome_set_mode(s_met);
 }
 
@@ -49,9 +72,23 @@ static void draw_row(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_ind
 static void select_click(MenuLayer *ml, MenuIndex *cell_index, void *ctx){
   (void)ml;(void)ctx;
   if(cell_index->row==0){
-    s_input = (InputMode)((s_input+1)%3);
+    // priority: Touch > Button > Motion(Z)
+    static const InputMode order[] = {INPUT_TOUCH, INPUT_BUTTON, INPUT_ACCEL};
+    int idx = 0;
+    for(int i=0;i<3;i++) if(order[i]==s_input){ idx=i; break; }
+    for(int step=0; step<3; step++){
+      idx = (idx+1)%3;
+      if(input_available(order[idx])){ s_input = order[idx]; break; }
+    }
   } else {
-    s_met = (MetMode)((s_met+1)%3);
+    // order as listed: Screen / Vibe / Sound / Screen+Vibe / Screen+Sound
+    static const MetMode order[] = {MET_SCREEN, MET_VIBE, MET_SOUND, MET_SCREEN_VIBE, MET_SCREEN_SOUND};
+    int idx = 0;
+    for(int i=0;i<MET_COUNT;i++) if(order[i]==s_met){ idx=i; break; }
+    for(int step=0; step<MET_COUNT; step++){
+      idx = (idx+1)%MET_COUNT;
+      if(met_available(order[idx])){ s_met = order[idx]; break; }
+    }
   }
   persist_save();
   menu_layer_reload_data(ml);

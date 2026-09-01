@@ -61,7 +61,8 @@ static void update_display(void) {
 }
 
 static void flash_cb(bool on) {
-  if (settings_get_met_mode() == MET_VIBE) return;
+  MetMode m = settings_get_met_mode();
+  if (m == MET_VIBE || m == MET_SOUND) return; // no screen component
   window_set_background_color(s_window, on ? GColorDarkGray : GColorBlack);
 }
 static void detector_timeout_cb(void *ctx) {
@@ -182,34 +183,26 @@ static void accel_handler(AccelData *data, uint32_t num_samples) {
   }
 }
 
-#if defined(PBL_TOUCH)
 static void touch_handler(const TouchEvent *event, void *ctx) {
   (void)ctx;
   if (settings_get_input_mode() != INPUT_TOUCH) return;
   if (event->type == TouchEvent_Touchdown) handle_tap();
 }
-#endif
 
 static void apply_input_mode(void) {
   accel_data_service_unsubscribe();
-#if defined(PBL_TOUCH)
   touch_service_unsubscribe();
-#endif
   InputMode m = settings_get_input_mode();
   if (m == INPUT_ACCEL) {
     accel_data_service_subscribe(5, accel_handler);
     accel_service_set_sampling_rate(ACCEL_SAMPLING_25HZ);
   } else if (m == INPUT_TOUCH) {
-#if defined(PBL_TOUCH)
     if (touch_service_is_enabled()) {
       touch_service_subscribe(touch_handler, NULL);
       window_set_touch_bridge_disabled(s_window, true);
     }
-#endif
   } else {
-#if defined(PBL_TOUCH)
     window_set_touch_bridge_disabled(s_window, false);
-#endif
   }
   APP_LOG(APP_LOG_LEVEL_INFO, "input mode %d", (int)m);
 }
@@ -273,9 +266,7 @@ static void window_disappear(Window *w) {
   (void)w;
   if (s_time_timer) { app_timer_cancel(s_time_timer); s_time_timer = NULL; }
   accel_data_service_unsubscribe();
-#if defined(PBL_TOUCH)
   touch_service_unsubscribe();
-#endif
 }
 
 static void window_load(Window *window) {
@@ -331,9 +322,7 @@ static void deinit(void) {
   if (s_time_timer) { app_timer_cancel(s_time_timer); s_time_timer = NULL; }
   if (s_detector_timer) { app_timer_cancel(s_detector_timer); s_detector_timer = NULL; }
   accel_data_service_unsubscribe();
-#if defined(PBL_TOUCH)
   touch_service_unsubscribe();
-#endif
   window_destroy(s_window);
 }
 

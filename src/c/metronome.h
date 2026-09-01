@@ -2,7 +2,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef enum { MET_BOTH = 0, MET_VIBE = 1, MET_SCREEN = 2 } MetMode;
+typedef enum {
+  MET_SCREEN_VIBE = 0,
+  MET_VIBE = 1,
+  MET_SCREEN = 2,
+  MET_SOUND = 3,
+  MET_SCREEN_SOUND = 4,
+  MET_COUNT = 5
+} MetMode;
 
 void metronome_init(void (*flash_cb)(bool on));
 void metronome_start(int32_t bpm);
