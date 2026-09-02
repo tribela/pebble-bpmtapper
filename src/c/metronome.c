@@ -48,7 +48,6 @@ static void beat_cb(void *ctx) {
   uint32_t now = get_now_ms_local();
   int32_t delay = (int32_t)(target - now);
   // keep near-zero guard: avoid scheduling in the past or too close
-  if (delay < 5) delay += (int32_t)interval;
   if (delay < 15) delay += (int32_t)interval;
   if (delay < 5) delay = 5;
   s_beat_timer = app_timer_register((uint32_t)delay, beat_cb, NULL);
