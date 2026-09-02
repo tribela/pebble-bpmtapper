@@ -7,8 +7,8 @@ static int32_t s_bpm = 128;
 static bool s_running = false;
 static MetMode s_mode = MET_SCREEN_VIBE;
 static bool s_flash_state = false;
-static uint32_t s_anchor_ms = 0;
-static uint32_t s_beat_n = 0;
+static uint32_t s_anchor_ms = 0; // wraps every ~49.7 days (uint32 ms since epoch)
+static uint32_t s_beat_n = 0; // overflows after ~27 years at 300 BPM; continuous run of that length not expected (battery/reboot resets state)
 
 static const uint32_t s_vibe_segments[] = { 20 };
 static const VibePattern s_vibe = { .durations = s_vibe_segments, .num_segments = 1 };
@@ -25,7 +25,7 @@ static inline bool has_sound(MetMode m) {
 
 static uint32_t get_now_ms_local(void) {
   time_t t; uint16_t ms; time_ms(&t, &ms);
-  return (uint32_t)t * 1000 + ms;
+  return (uint32_t)t * 1000 + ms; // wraps every ~49.7 days; beat scheduling assumes no single session spans that long
 }
 
 static void beat_cb(void *ctx) {
