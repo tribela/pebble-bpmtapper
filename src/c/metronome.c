@@ -7,6 +7,8 @@ static int32_t s_bpm = 128;
 static bool s_running = false;
 static MetMode s_mode = MET_SCREEN_VIBE;
 static bool s_flash_state = false;
+static uint32_t s_anchor_ms = 0; // wraps every ~49.7 days (uint32 ms since epoch)
+static uint32_t s_beat_n = 0; // overflows after ~27 years at 300 BPM; continuous run of that length not expected (battery/reboot resets state)
 
 static const uint32_t s_vibe_segments[] = { 20 };
 static const VibePattern s_vibe = { .durations = s_vibe_segments, .num_segments = 1 };
@@ -23,16 +25,7 @@ static inline bool has_sound(MetMode m) {
 
 static uint32_t get_now_ms_local(void) {
   time_t t; uint16_t ms; time_ms(&t, &ms);
-  return (uint32_t)t * 1000 + ms;
-}
-static uint32_t phase_delay(uint32_t anchor_ms, uint32_t interval) {
-  if (anchor_ms == 0) return interval;
-  uint32_t now = get_now_ms_local();
-  uint32_t elapsed = now - anchor_ms;
-  uint32_t rem = elapsed % interval;
-  uint32_t delay = (rem == 0) ? interval : interval - rem;
-  if (delay < 15) delay += interval; // avoid near-zero glitch
-  return delay;
+  return (uint32_t)t * 1000 + ms; // wraps every ~49.7 days; beat scheduling assumes no single session spans that long
 }
 
 static void beat_cb(void *ctx) {
@@ -50,7 +43,14 @@ static void beat_cb(void *ctx) {
 
   if (s_bpm <= 0) return;
   uint32_t interval = 60000 / (uint32_t)s_bpm;
-  s_beat_timer = app_timer_register(interval, beat_cb, NULL);
+  s_beat_n++;
+  uint64_t target = (uint64_t)s_anchor_ms + (uint64_t)(s_beat_n + 1) * 60000 / (uint32_t)s_bpm;
+  uint32_t now = get_now_ms_local();
+  int32_t delay = (int32_t)(target - now);
+  // keep near-zero guard: avoid scheduling in the past or too close
+  if (delay < 15) delay += (int32_t)interval;
+  if (delay < 5) delay = 5;
+  s_beat_timer = app_timer_register((uint32_t)delay, beat_cb, NULL);
 }
 
 void metronome_init(void (*flash_cb)(bool on)) {
@@ -59,6 +59,8 @@ void metronome_init(void (*flash_cb)(bool on)) {
   s_running = false;
   s_mode = MET_SCREEN_VIBE;
   s_flash_state = false;
+  s_anchor_ms = 0;
+  s_beat_n = 0;
 }
 
 void metronome_start(int32_t bpm) {
@@ -76,18 +78,25 @@ void metronome_start_aligned(int32_t bpm, uint32_t anchor_ms) {
   light_enable(true);
   uint32_t interval = 60000 / (uint32_t)s_bpm;
   uint32_t delay;
+  uint32_t now = get_now_ms_local();
   if (anchor_ms == 0) {
+    s_anchor_ms = now;
+    s_beat_n = 0;
     delay = interval;
   } else {
-    uint32_t now = get_now_ms_local();
+    s_anchor_ms = anchor_ms;
     uint32_t elapsed = now - anchor_ms;
-    uint32_t rem = elapsed % interval;
-    delay = (interval - rem) % interval; // 0 when exactly on grid -> immediate
-    if (delay == 0) delay = 5; // fire almost immediately to hit grid
-    else if (delay < 15) delay += interval;
+    // beat index of next beat (0-based: anchor is beat 0)
+    s_beat_n = (uint32_t)((uint64_t)elapsed * (uint32_t)s_bpm / 60000);
+    uint64_t target = (uint64_t)s_anchor_ms + (uint64_t)(s_beat_n + 1) * 60000 / (uint32_t)s_bpm;
+    int32_t d = (int32_t)(target - now);
+    if (d == 0) d = 5; // exactly on grid -> fire immediately
+    else if (d < 15) d += (int32_t)interval;
+    if (d < 5) d = 5;
+    delay = (uint32_t)d;
   }
   s_beat_timer = app_timer_register(delay, beat_cb, NULL);
-  APP_LOG(APP_LOG_LEVEL_INFO, "metronome start %d mode %d interval %u delay %u anchor %u", (int)s_bpm, (int)s_mode, (unsigned)interval, (unsigned)delay, (unsigned)anchor_ms);
+  APP_LOG(APP_LOG_LEVEL_INFO, "metronome start %d mode %d interval %u delay %u anchor %u beat %u", (int)s_bpm, (int)s_mode, (unsigned)interval, (unsigned)delay, (unsigned)anchor_ms, (unsigned)s_beat_n);
 }
 
 void metronome_stop(void) {
@@ -112,9 +121,28 @@ void metronome_set_bpm_aligned(int32_t bpm, uint32_t anchor_ms) {
   if (s_running) {
     if (s_beat_timer) { app_timer_cancel(s_beat_timer); s_beat_timer = NULL; }
     uint32_t interval = 60000 / (uint32_t)s_bpm;
-    uint32_t delay = phase_delay(anchor_ms, interval);
-    s_beat_timer = app_timer_register(delay, beat_cb, NULL);
-    APP_LOG(APP_LOG_LEVEL_INFO, "metronome set bpm %d delay %u anchor %u", (int)s_bpm, (unsigned)delay, (unsigned)anchor_ms);
+    uint32_t now = get_now_ms_local();
+    if (anchor_ms == 0) {
+      // no anchor: keep existing anchor, recompute phase with new BPM
+      uint32_t elapsed = now - s_anchor_ms;
+      s_beat_n = (uint32_t)((uint64_t)elapsed * (uint32_t)s_bpm / 60000);
+      uint64_t target = (uint64_t)s_anchor_ms + (uint64_t)(s_beat_n + 1) * 60000 / (uint32_t)s_bpm;
+      int32_t d = (int32_t)(target - now);
+      if (d < 15) d += (int32_t)interval;
+      if (d < 5) d = 5;
+      s_beat_timer = app_timer_register((uint32_t)d, beat_cb, NULL);
+      APP_LOG(APP_LOG_LEVEL_INFO, "metronome set bpm %d delay %u anchor %u beat %u", (int)s_bpm, (unsigned)d, (unsigned)s_anchor_ms, (unsigned)s_beat_n);
+    } else {
+      // silent phase reset: anchor is the new beat 0, next beat is +1 interval
+      s_anchor_ms = anchor_ms;
+      s_beat_n = 0;
+      uint64_t target = (uint64_t)s_anchor_ms + (uint64_t)60000 / (uint32_t)s_bpm;
+      int32_t d = (int32_t)(target - now);
+      if (d < 15) d += (int32_t)interval;
+      if (d < 5) d = 5;
+      s_beat_timer = app_timer_register((uint32_t)d, beat_cb, NULL);
+      APP_LOG(APP_LOG_LEVEL_INFO, "metronome set bpm %d delay %u anchor %u (phase reset, silent)", (int)s_bpm, (unsigned)d, (unsigned)anchor_ms);
+    }
   } else {
     APP_LOG(APP_LOG_LEVEL_INFO, "metronome set bpm %d (stopped)", (int)s_bpm);
   }
