@@ -12,7 +12,11 @@ static Window *s_window;
 static TextLayer *s_bpm_layer; // placeholder "Tap to detect"
 static TextLayer *s_bpm_num_layer; // fixed-width numbers
 static TextLayer *s_bpm_unit_layer; // "BPM" label
+static TextLayer *s_genre_layer;
+static TextLayer *s_138_prefix_layer; // "Who's Afraid of" above big 138
 static TextLayer *s_time_layer;
+static int s_block_y = 0;
+static int s_block_h = 0;
 static AppTimer *s_time_timer = NULL;
 static AppTimer *s_detector_timer = NULL;
 static int32_t s_bpm = 0; // 0 = no valid BPM yet
@@ -26,6 +30,43 @@ static uint8_t s_tap_count = 0;
 
 static char s_time_buf[16]; // static: text_layer keeps pointer, not copy
 static char s_bpm_buf[16];
+
+// ---- genre / easter tables (list-driven) ----
+static const struct {
+  int16_t bpm;
+  const char *label;
+} s_easter_map[] = {
+  {  60, "One Per Second \xE2\x8C\x9A" }, // ⌚ U+231A WATCH looks like pebble
+  { 128, "Club Standard" },
+  { 138, "Who's Afraid of 138?!" },
+  { 140, "Let's Trance \xE2\x99\xA5" },   // ♥ U+2665
+  { 174, "DnB Mode: ON" },
+};
+
+static const struct {
+  int16_t lo;
+  int16_t hi;
+  const char *label;
+} s_genre_map[] = {
+  {  60,  79, "Ballad" },
+  {  80,  99, "Hip-Hop" },
+  { 100, 115, "Pop" },
+  { 126, 129, "House" },
+  { 130, 137, "Trance" },
+  { 138, 142, "Trance / Dubstep" },
+  { 143, 160, "Hardstyle" },
+  { 168, 180, "DnB" },
+};
+
+static const char *genre_for_bpm(int32_t bpm) {
+  for (size_t i = 0; i < sizeof(s_easter_map) / sizeof(s_easter_map[0]); i++) {
+    if (bpm == s_easter_map[i].bpm) return s_easter_map[i].label;
+  }
+  for (size_t i = 0; i < sizeof(s_genre_map) / sizeof(s_genre_map[0]); i++) {
+    if (bpm >= s_genre_map[i].lo && bpm <= s_genre_map[i].hi) return s_genre_map[i].label;
+  }
+  return NULL;
+}
 
 static void update_display(void);
 static void flash_cb(bool on);
@@ -58,6 +99,23 @@ static char s_bpm_num_buf[8];
 static void update_display(void) {
   if (!s_bpm_layer || !s_bpm_num_layer || !s_bpm_unit_layer) return;
   if (s_bpm >= BPM_MIN && s_bpm <= BPM_MAX) {
+    if (s_bpm == 138 && s_138_prefix_layer && s_genre_layer) {
+      // special 138: use big 138 as part of "Who's Afraid of 138?!"
+      snprintf(s_bpm_num_buf, sizeof(s_bpm_num_buf), "%d", (int)s_bpm);
+      text_layer_set_text(s_bpm_num_layer, s_bpm_num_buf);
+      text_layer_set_text(s_138_prefix_layer, "Who's Afraid of");
+      text_layer_set_text(s_genre_layer, "?!");
+      // also keep BPM label hidden, show prefix+number+suffix
+      layer_set_hidden(text_layer_get_layer(s_bpm_layer), true);
+      layer_set_hidden(text_layer_get_layer(s_bpm_num_layer), false);
+      layer_set_hidden(text_layer_get_layer(s_bpm_unit_layer), true);
+      layer_set_hidden(text_layer_get_layer(s_138_prefix_layer), false);
+      layer_set_hidden(text_layer_get_layer(s_genre_layer), false);
+      // genre font already 24_BOLD, prefix is 18_BOLD
+      return;
+    }
+    // normal: hide 138 prefix if present
+    if (s_138_prefix_layer) layer_set_hidden(text_layer_get_layer(s_138_prefix_layer), true);
     // stacked centered: numbers top, BPM label below
     snprintf(s_bpm_num_buf, sizeof(s_bpm_num_buf), "%d", (int)s_bpm);
     text_layer_set_text(s_bpm_num_layer, s_bpm_num_buf);
@@ -65,12 +123,23 @@ static void update_display(void) {
     layer_set_hidden(text_layer_get_layer(s_bpm_layer), true);
     layer_set_hidden(text_layer_get_layer(s_bpm_num_layer), false);
     layer_set_hidden(text_layer_get_layer(s_bpm_unit_layer), false);
+    if (s_genre_layer) {
+      const char *g = genre_for_bpm(s_bpm);
+      if (g) {
+        text_layer_set_text(s_genre_layer, g);
+        layer_set_hidden(text_layer_get_layer(s_genre_layer), false);
+      } else {
+        layer_set_hidden(text_layer_get_layer(s_genre_layer), true);
+      }
+    }
   } else {
     snprintf(s_bpm_buf, sizeof(s_bpm_buf), "Tap to detect");
     text_layer_set_text(s_bpm_layer, s_bpm_buf);
     layer_set_hidden(text_layer_get_layer(s_bpm_layer), false);
     layer_set_hidden(text_layer_get_layer(s_bpm_num_layer), true);
     layer_set_hidden(text_layer_get_layer(s_bpm_unit_layer), true);
+    if (s_genre_layer) layer_set_hidden(text_layer_get_layer(s_genre_layer), true);
+    if (s_138_prefix_layer) layer_set_hidden(text_layer_get_layer(s_138_prefix_layer), true);
   }
 }
 
@@ -313,6 +382,8 @@ static void window_load(Window *window) {
   int block_h = 50 + 2 + 18;
   int block_y = (b.size.h - block_h)/2;
   if (block_y < 30) block_y = 30; // keep below time bar
+  s_block_y = block_y;
+  s_block_h = block_h;
   s_bpm_num_layer = text_layer_create(GRect(0, block_y, b.size.w, 50));
   text_layer_set_background_color(s_bpm_num_layer, GColorClear);
   text_layer_set_text_color(s_bpm_num_layer, GColorWhite);
@@ -329,12 +400,36 @@ static void window_load(Window *window) {
   layer_set_hidden(text_layer_get_layer(s_bpm_num_layer), true);
   layer_set_hidden(text_layer_get_layer(s_bpm_unit_layer), true);
 
+  // genre / easter label below BPM unit (word-wrap for long easter, large font)
+  s_genre_layer = text_layer_create(GRect(0, block_y + block_h + 4, b.size.w, 55));
+  text_layer_set_background_color(s_genre_layer, GColorClear);
+  text_layer_set_text_color(s_genre_layer, GColorWhite);
+  text_layer_set_text_alignment(s_genre_layer, GTextAlignmentCenter);
+  text_layer_set_font(s_genre_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_overflow_mode(s_genre_layer, GTextOverflowModeWordWrap);
+  layer_add_child(root, text_layer_get_layer(s_genre_layer));
+  layer_set_hidden(text_layer_get_layer(s_genre_layer), true);
+
+  // 138 special: "Who's Afraid of" above the big 138
+  int prefix_h = 22;
+  int prefix_y = block_y - prefix_h - 2;
+  if (prefix_y < 32) prefix_y = 32; // keep below time bar (30)
+  s_138_prefix_layer = text_layer_create(GRect(0, prefix_y, b.size.w, prefix_h));
+  text_layer_set_background_color(s_138_prefix_layer, GColorClear);
+  text_layer_set_text_color(s_138_prefix_layer, GColorWhite);
+  text_layer_set_text_alignment(s_138_prefix_layer, GTextAlignmentCenter);
+  text_layer_set_font(s_138_prefix_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+  layer_add_child(root, text_layer_get_layer(s_138_prefix_layer));
+  layer_set_hidden(text_layer_get_layer(s_138_prefix_layer), true);
+
   update_time();
   update_display();
 }
 
 static void window_unload(Window *window) {
   (void)window;
+  text_layer_destroy(s_138_prefix_layer); s_138_prefix_layer = NULL;
+  text_layer_destroy(s_genre_layer); s_genre_layer = NULL;
   text_layer_destroy(s_bpm_unit_layer); s_bpm_unit_layer = NULL;
   text_layer_destroy(s_bpm_num_layer); s_bpm_num_layer = NULL;
   text_layer_destroy(s_bpm_layer); s_bpm_layer = NULL;
